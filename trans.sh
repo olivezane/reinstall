@@ -4764,8 +4764,45 @@ change_ssh_port() {
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
 }
 
-# 由 ticket 04 实现，$1=os_dir
-install_void_init() { :; }
+install_void_init() {
+    local os_dir=$1
+
+    # gentoo 不会自动创建 machine-id
+    clear_machine_id $os_dir
+
+    # sshd
+    # Void 是 runit，没有 systemctl
+    # 离线安装时 /var/service 是指向 /run 的悬空链接，按官方 installer 直接写 default runsvdir
+    ln -sf /etc/sv/sshd $os_dir/etc/runit/runsvdir/default/sshd
+    chroot $os_dir ssh-keygen -A
+
+    if is_need_change_ssh_port; then
+        change_ssh_port $os_dir $ssh_port
+    fi
+
+    # 公钥/密码
+    add_user_if_need "$os_dir"
+    if is_need_set_ssh_keys; then
+        set_ssh_keys_and_del_password $os_dir
+        change_ssh_conf_for_key_login $os_dir
+    else
+        change_user_password $os_dir
+        change_ssh_conf_for_password_login $os_dir
+    fi
+
+    # locale
+    # glibc-locales 默认把所有 locale 注释掉了，没有的行直接追加
+    local loc
+    for loc in 'C.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8'; do
+        sed -i "s|^#\? *$loc\$|$loc|" $os_dir/etc/default/libc-locales
+        grep -qxF "$loc" $os_dir/etc/default/libc-locales ||
+            echo "$loc" >>$os_dir/etc/default/libc-locales
+    done
+    chroot $os_dir xbps-reconfigure -f glibc-locales
+
+    # 时区，runit 的 05-misc.sh 会读它生成 /etc/localtime
+    sed -i 's|^#\?TIMEZONE=.*|TIMEZONE="Asia/Shanghai"|' $os_dir/etc/rc.conf
+}
 
 # 暂时用不着
 add_user_if_need_for_alpine() {
