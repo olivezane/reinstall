@@ -2256,8 +2256,43 @@ add_frpc_systemd_service_if_need() {
     fi
 }
 
-# 由 ticket 06 实现，$1=os_dir
-add_frpc_runit_service_if_need() { :; }
+add_frpc_runit_service_if_need() {
+    local os_dir=$1
+
+    if ls /configs/frpc.* >/dev/null 2>&1; then
+        mkdir -p "$os_dir/usr/local/bin"
+        mkdir -p "$os_dir/usr/local/etc/frpc"
+
+        # 下载 frpc
+        # 注意下载的 frpc owner 不是 root:root
+        frpc_url=$(get_frpc_url linux)
+        basename=$(echo "$frpc_url" | awk -F/ '{print $NF}' | sed 's/\.tar\.gz//')
+        download "$frpc_url" "$os_dir/frpc.tar.gz"
+        # busybox tar 不支持 wildcard
+        # tar: */frpc: not found in archive
+        tar xzf "$os_dir/frpc.tar.gz" "$basename/frpc" -O >"$os_dir/usr/local/bin/frpc"
+        rm -f "$os_dir/frpc.tar.gz"
+        chmod a+x "$os_dir/usr/local/bin/frpc"
+
+        # frpc toml
+        cp -f /configs/frpc.* "$os_dir/usr/local/etc/frpc/frpc.toml"
+
+        # runit 没有 systemd 的 DynamicUser/LoadCredential，只能建用户
+        chroot "$os_dir" useradd --system --no-create-home \
+            --home-dir /nonexistent \
+            --shell /sbin/nologin \
+            frpc
+        chroot "$os_dir" chown root:frpc /usr/local/etc/frpc/frpc.toml
+        chroot "$os_dir" chmod 640 /usr/local/etc/frpc/frpc.toml
+
+        # 安装 runit 服务
+        mkdir -p "$os_dir/etc/sv/frpc"
+        download "$confhome/frpc-runit.sh" "$os_dir/etc/sv/frpc/run"
+        chmod +x "$os_dir/etc/sv/frpc/run"
+        mkdir -p "$os_dir/var/service"
+        ln -sf /etc/sv/frpc "$os_dir/var/service/frpc"
+    fi
+}
 
 get_fs_of_mount_point() {
     local mount_point=$1
