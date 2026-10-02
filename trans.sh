@@ -2289,8 +2289,8 @@ add_frpc_runit_service_if_need() {
         mkdir -p "$os_dir/etc/sv/frpc"
         download "$confhome/frpc-runit.sh" "$os_dir/etc/sv/frpc/run"
         chmod +x "$os_dir/etc/sv/frpc/run"
-        mkdir -p "$os_dir/var/service"
-        ln -sf /etc/sv/frpc "$os_dir/var/service/frpc"
+        # 离线时 /var/service 是悬空链接，直接写 default runsvdir
+        ln -sf /etc/sv/frpc "$os_dir/etc/runit/runsvdir/default/frpc"
     fi
 }
 
@@ -2397,13 +2397,9 @@ install_void() {
     # 挂载伪文件系统
     mount_pseudo_fs $os_dir
 
-    install_void_packages $os_dir
-    install_void_network $os_dir
-    install_void_init $os_dir
-    install_void_boot $os_dir
-    add_frpc_runit_service_if_need $os_dir
-
     # fstab
+    # 必须在 install_void_boot 的 xbps-reconfigure -fa 之前生成
+    # 因为 dracut 的 hostonly 模式靠 /etc/fstab 判断根分区
     # fstab 头部有使用说明，因此用 >>
     local alpine_rootfs=$os_dir/alpine
     create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
@@ -2412,6 +2408,12 @@ install_void() {
     chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
     umount -R "$alpine_rootfs/parent"
     remove_alpine_rootfs "$alpine_rootfs"
+
+    install_void_packages $os_dir
+    install_void_network $os_dir
+    install_void_init $os_dir
+    install_void_boot $os_dir
+    add_frpc_runit_service_if_need $os_dir
 
     # 删除 swap
     swapoff -a
@@ -4037,7 +4039,9 @@ install_void_network() {
 
     # 启用 NetworkManager（依赖 dbus）
     # 不要启用 dhcpcd：base-system 装了它，但网络由 NM 管（ADR-0001）
-    chroot $os_dir ln -s /etc/sv/dbus /etc/sv/NetworkManager /var/service/
+    # 离线时 /var/service 是指向 /run 的悬空链接，不能往里面 ln，直接写 default runsvdir
+    ln -sf /etc/sv/dbus $os_dir/etc/runit/runsvdir/default/dbus
+    ln -sf /etc/sv/NetworkManager $os_dir/etc/runit/runsvdir/default/NetworkManager
 
     # 修正网卡名
     # 不用 systemd 的 add_fix_eth_name_systemd_service，也不挂成 runit 服务：
