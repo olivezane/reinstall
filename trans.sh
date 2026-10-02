@@ -2210,6 +2210,15 @@ add_fix_eth_name_systemd_service() {
     add_systemd_service "$os_dir" fix-eth-name
 }
 
+# Void 用 runit 启用服务
+# 离线安装时 /var/service 是指向 /run/runit/runsvdir/current 的悬空链接
+# 因此不能往 /var/service 里 ln，直接写 default runsvdir（Void 官方 installer 的做法）
+enable_runit_service() {
+    local os_dir=$1
+    local service=$2
+    ln -sf /etc/sv/$service $os_dir/etc/runit/runsvdir/default/$service
+}
+
 get_frpc_url() {
     wget "$confhome/get-frpc-url.sh" -O- | sh -s "$@"
 }
@@ -2289,8 +2298,7 @@ add_frpc_runit_service_if_need() {
         mkdir -p "$os_dir/etc/sv/frpc"
         download "$confhome/frpc-runit.sh" "$os_dir/etc/sv/frpc/run"
         chmod +x "$os_dir/etc/sv/frpc/run"
-        # 离线时 /var/service 是悬空链接，直接写 default runsvdir
-        ln -sf /etc/sv/frpc "$os_dir/etc/runit/runsvdir/default/frpc"
+        enable_runit_service $os_dir frpc
     fi
 }
 
@@ -2863,6 +2871,7 @@ install_void_boot() {
     local os_dir=$1
 
     # grub 包
+    local grub_pkg
     if is_efi; then
         case "$(uname -m)" in
         aarch64) grub_pkg=grub-arm64-efi ;;
@@ -4039,9 +4048,8 @@ install_void_network() {
 
     # 启用 NetworkManager（依赖 dbus）
     # 不要启用 dhcpcd：base-system 装了它，但网络由 NM 管（ADR-0001）
-    # 离线时 /var/service 是指向 /run 的悬空链接，不能往里面 ln，直接写 default runsvdir
-    ln -sf /etc/sv/dbus $os_dir/etc/runit/runsvdir/default/dbus
-    ln -sf /etc/sv/NetworkManager $os_dir/etc/runit/runsvdir/default/NetworkManager
+    enable_runit_service $os_dir dbus
+    enable_runit_service $os_dir NetworkManager
 
     # 修正网卡名
     # 不用 systemd 的 add_fix_eth_name_systemd_service，也不挂成 runit 服务：
@@ -4836,13 +4844,12 @@ change_ssh_port() {
 install_void_init() {
     local os_dir=$1
 
-    # gentoo 不会自动创建 machine-id
+    # Void 的 base-system 不会自动创建 machine-id
     clear_machine_id $os_dir
 
     # sshd
     # Void 是 runit，没有 systemctl
-    # 离线安装时 /var/service 是指向 /run 的悬空链接，按官方 installer 直接写 default runsvdir
-    ln -sf /etc/sv/sshd $os_dir/etc/runit/runsvdir/default/sshd
+    enable_runit_service $os_dir sshd
     chroot $os_dir ssh-keygen -A
 
     if is_need_change_ssh_port; then
