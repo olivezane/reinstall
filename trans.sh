@@ -3959,8 +3959,33 @@ create_network_manager_config() {
     done
 }
 
-# 由 ticket 03 实现，$1=os_dir
-install_void_network() { :; }
+install_void_network() {
+    local os_dir=$1
+
+    # base-system 没有 NetworkManager/dbus，本 hook 是它们唯一的安装点
+    chroot $os_dir xbps-install -Sy dbus NetworkManager
+
+    # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+    create_cloud_init_network_config /net.cfg
+    create_network_manager_config /net.cfg "$os_dir"
+    rm /net.cfg
+
+    # 启用 NetworkManager（依赖 dbus）
+    # 不要启用 dhcpcd：base-system 装了它，但网络由 NM 管（ADR-0001）
+    chroot $os_dir ln -s /etc/sv/dbus /etc/sv/NetworkManager /var/service/
+
+    # 修正网卡名
+    # 不用 systemd 的 add_fix_eth_name_systemd_service，也不挂成 runit 服务：
+    # runit 没有排序，NM 可能先启动
+    # Void 的 runit stage 2 在 runsvdir 之前执行 /etc/rc.local，早于 dbus/NetworkManager
+    download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
+    cat >$os_dir/etc/rc.local <<'EOF'
+#!/bin/sh
+bash /fix-eth-name.sh
+rm -f /fix-eth-name.sh /etc/rc.local
+EOF
+    chmod +x $os_dir/etc/rc.local
+}
 
 modify_linux() {
     local os_dir=$1
