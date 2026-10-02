@@ -2822,8 +2822,38 @@ EOF
     rm -rf $os_dir/swapfile
 }
 
-# 由 ticket 05 实现，$1=os_dir
-install_void_boot() { :; }
+install_void_boot() {
+    local os_dir=$1
+
+    # grub 包
+    if is_efi; then
+        case "$(uname -m)" in
+        aarch64) grub_pkg=grub-arm64-efi ;;
+        *) grub_pkg=grub-x86_64-efi ;;
+        esac
+    else
+        grub_pkg=grub
+    fi
+    chroot $os_dir xbps-install -Sy $grub_pkg
+
+    # grub-install
+    if is_efi; then
+        # Void 文档的 ESP 挂载点就是 /boot/efi
+        chroot $os_dir grub-install --efi-directory=/boot/efi
+        chroot $os_dir grub-install --efi-directory=/boot/efi --removable
+    else
+        chroot $os_dir grub-install /dev/$xda
+    fi
+
+    # tty cmdline
+    # 必须在 xbps-reconfigure 之前写入，否则生成的 grub.cfg 里没有 console
+    # Void 没有 /etc/default/grub.d/，直接改主文件
+    ttys_cmdline=$(get_ttys console=)
+    echo GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $ttys_cmdline\" >>$os_dir/etc/default/grub
+
+    # 生成 dracut initramfs 和 grub.cfg
+    chroot $os_dir xbps-reconfigure -fa
+}
 
 get_http_file_size() {
     url=$1
