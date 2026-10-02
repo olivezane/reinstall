@@ -2256,7 +2256,7 @@ add_frpc_systemd_service_if_need() {
     fi
 }
 
-# 由 ticket 06 实现
+# 由 ticket 06 实现，$1=os_dir
 add_frpc_runit_service_if_need() { :; }
 
 get_fs_of_mount_point() {
@@ -2344,7 +2344,8 @@ install_void() {
     mount_part_basic_layout $os_dir $os_dir/boot/efi
 
     # 添加 swap
-    create_swap_if_ram_less_than 512 $os_dir/swapfile
+    # 跟 arch 一档：完整升级 + 装内核 + 生成 initramfs 都吃内存
+    create_swap_if_ram_less_than 1024 $os_dir/swapfile
 
     # 解压系统
     apk add tar xz pv
@@ -2361,10 +2362,10 @@ install_void() {
     # 挂载伪文件系统
     mount_pseudo_fs $os_dir
 
-    install_void_packages
-    install_void_network
-    install_void_init
-    install_void_boot
+    install_void_packages $os_dir
+    install_void_network $os_dir
+    install_void_init $os_dir
+    install_void_boot $os_dir
     add_frpc_runit_service_if_need $os_dir
 
     # fstab
@@ -2383,6 +2384,8 @@ install_void() {
 }
 
 install_void_packages() {
+    local os_dir=$1
+
     # 仓库源
     # aarch64 的仓库在 /current/aarch64 下
     local repo=$mirror/current
@@ -2819,7 +2822,7 @@ EOF
     rm -rf $os_dir/swapfile
 }
 
-# 由 ticket 05 实现
+# 由 ticket 05 实现，$1=os_dir
 install_void_boot() { :; }
 
 get_http_file_size() {
@@ -3956,7 +3959,7 @@ create_network_manager_config() {
     done
 }
 
-# 由 ticket 03 实现
+# 由 ticket 03 实现，$1=os_dir
 install_void_network() { :; }
 
 modify_linux() {
@@ -4736,7 +4739,7 @@ change_ssh_port() {
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
 }
 
-# 由 ticket 04 实现
+# 由 ticket 04 实现，$1=os_dir
 install_void_init() { :; }
 
 # 暂时用不着
