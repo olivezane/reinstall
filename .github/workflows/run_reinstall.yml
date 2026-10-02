@@ -36,6 +36,7 @@ jobs:
           # ${{ matrix.command }} opensuse
           # ${{ matrix.command }} arch
           # ${{ matrix.command }} gentoo
+          ${{ matrix.command }} void
 
           ${{ matrix.command_no_username_option }} netboot.xyz
           ${{ matrix.command }} dd --img=https://cloud.debian.org/images/cloud/sid/daily/latest/debian-sid-nocloud-amd64-daily.tar.xz

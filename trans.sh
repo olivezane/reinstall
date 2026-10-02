@@ -2210,6 +2210,15 @@ add_fix_eth_name_systemd_service() {
     add_systemd_service "$os_dir" fix-eth-name
 }
 
+# Void 用 runit 启用服务
+# 离线安装时 /var/service 是指向 /run/runit/runsvdir/current 的悬空链接
+# 因此不能往 /var/service 里 ln，直接写 default runsvdir（Void 官方 installer 的做法）
+enable_runit_service() {
+    local os_dir=$1
+    local service=$2
+    ln -sf /etc/sv/$service $os_dir/etc/runit/runsvdir/default/$service
+}
+
 get_frpc_url() {
     wget "$confhome/get-frpc-url.sh" -O- | sh -s "$@"
 }
@@ -2253,6 +2262,43 @@ add_frpc_systemd_service_if_need() {
 
         # 添加服务
         add_systemd_service "$os_dir" frpc /tmp/frpc.service
+    fi
+}
+
+add_frpc_runit_service_if_need() {
+    local os_dir=$1
+
+    if ls /configs/frpc.* >/dev/null 2>&1; then
+        mkdir -p "$os_dir/usr/local/bin"
+        mkdir -p "$os_dir/usr/local/etc/frpc"
+
+        # 下载 frpc
+        # 注意下载的 frpc owner 不是 root:root
+        frpc_url=$(get_frpc_url linux)
+        basename=$(echo "$frpc_url" | awk -F/ '{print $NF}' | sed 's/\.tar\.gz//')
+        download "$frpc_url" "$os_dir/frpc.tar.gz"
+        # busybox tar 不支持 wildcard
+        # tar: */frpc: not found in archive
+        tar xzf "$os_dir/frpc.tar.gz" "$basename/frpc" -O >"$os_dir/usr/local/bin/frpc"
+        rm -f "$os_dir/frpc.tar.gz"
+        chmod a+x "$os_dir/usr/local/bin/frpc"
+
+        # frpc toml
+        cp -f /configs/frpc.* "$os_dir/usr/local/etc/frpc/frpc.toml"
+
+        # runit 没有 systemd 的 DynamicUser/LoadCredential，只能建用户
+        chroot "$os_dir" useradd --system --no-create-home \
+            --home-dir /nonexistent \
+            --shell /sbin/nologin \
+            frpc
+        chroot "$os_dir" chown root:frpc /usr/local/etc/frpc/frpc.toml
+        chroot "$os_dir" chmod 640 /usr/local/etc/frpc/frpc.toml
+
+        # 安装 runit 服务
+        mkdir -p "$os_dir/etc/sv/frpc"
+        download "$confhome/frpc-runit.sh" "$os_dir/etc/sv/frpc/run"
+        chmod +x "$os_dir/etc/sv/frpc/run"
+        enable_runit_service $os_dir frpc
     fi
 }
 
@@ -2328,6 +2374,96 @@ basic_init() {
 
     # frpc
     add_frpc_systemd_service_if_need $os_dir
+}
+
+install_void() {
+    info "install $distro"
+
+    create_part
+
+    local os_dir=/os
+
+    # 挂载分区
+    mount_part_basic_layout $os_dir $os_dir/boot/efi
+
+    # 添加 swap
+    # 跟 arch 一档：完整升级 + 装内核 + 生成 initramfs 都吃内存
+    create_swap_if_ram_less_than 1024 $os_dir/swapfile
+
+    # 解压系统
+    apk add tar xz pv
+    # shellcheck disable=SC2154
+    download "$img" $os_dir/void.tar.xz
+    echo "Uncompressing Void..."
+    pv -f $os_dir/void.tar.xz | tar xpJ --numeric-owner --xattrs-include='*.*' -C $os_dir
+    rm -f $os_dir/void.tar.xz
+    apk del tar xz pv
+
+    # dns
+    cp_resolv_conf $os_dir
+
+    # 挂载伪文件系统
+    mount_pseudo_fs $os_dir
+
+    # fstab
+    # 必须在 install_void_boot 的 xbps-reconfigure -fa 之前生成
+    # 因为 dracut 的 hostonly 模式靠 /etc/fstab 判断根分区
+    # fstab 头部有使用说明，因此用 >>
+    local alpine_rootfs=$os_dir/alpine
+    create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
+    # genfstab 会用到 findmnt 等工具
+    retry 5 chroot "$alpine_rootfs" apk add util-linux
+    chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
+    umount -R "$alpine_rootfs/parent"
+    remove_alpine_rootfs "$alpine_rootfs"
+
+    install_void_packages $os_dir
+    install_void_network $os_dir
+    install_void_init $os_dir
+    install_void_boot $os_dir
+    add_frpc_runit_service_if_need $os_dir
+
+    # 删除 swap
+    swapoff -a
+    rm -rf $os_dir/swapfile
+}
+
+install_void_packages() {
+    local os_dir=$1
+
+    # 仓库源
+    # aarch64 的仓库在 /current/aarch64 下
+    local repo=$mirror/current
+    case "$(uname -m)" in
+    aarch64) repo=$mirror/current/aarch64 ;;
+    esac
+    mkdir -p $os_dir/etc/xbps.d
+    cat <<EOF >$os_dir/etc/xbps.d/00-repository-main.conf
+repository=$repo
+repository=$repo/nonfree
+EOF
+
+    # 更新 xbps 自身
+    chroot $os_dir xbps-install -Suy xbps
+
+    # 完整升级，避免旧快照与滚动仓库混装出依赖冲突
+    chroot $os_dir xbps-install -Suy
+
+    # 安装 base-system
+    chroot $os_dir xbps-install -Sy base-system
+
+    # 删除只适合容器的包
+    chroot $os_dir xbps-remove -Ry base-container-full
+
+    # base-system 只在 i686*/x86_64* 依赖 linux
+    if [ "$(uname -m)" = aarch64 ]; then
+        chroot $os_dir xbps-install -Sy linux
+    fi
+
+    # firmware + microcode
+    if fw_pkgs=$(get_ucode_firmware_pkgs) && [ -n "$fw_pkgs" ]; then
+        chroot $os_dir xbps-install -Sy $fw_pkgs
+    fi
 }
 
 install_arch_gentoo_aosc() {
@@ -2729,6 +2865,40 @@ EOF
     # 删除 swap
     swapoff -a
     rm -rf $os_dir/swapfile
+}
+
+install_void_boot() {
+    local os_dir=$1
+
+    # grub 包
+    local grub_pkg
+    if is_efi; then
+        case "$(uname -m)" in
+        aarch64) grub_pkg=grub-arm64-efi ;;
+        *) grub_pkg=grub-x86_64-efi ;;
+        esac
+    else
+        grub_pkg=grub
+    fi
+    chroot $os_dir xbps-install -Sy $grub_pkg
+
+    # grub-install
+    if is_efi; then
+        # Void 文档的 ESP 挂载点就是 /boot/efi
+        chroot $os_dir grub-install --efi-directory=/boot/efi
+        chroot $os_dir grub-install --efi-directory=/boot/efi --removable
+    else
+        chroot $os_dir grub-install /dev/$xda
+    fi
+
+    # tty cmdline
+    # 必须在 xbps-reconfigure 之前写入，否则生成的 grub.cfg 里没有 console
+    # Void 没有 /etc/default/grub.d/，直接改主文件
+    ttys_cmdline=$(get_ttys console=)
+    echo GRUB_CMDLINE_LINUX=\"\$GRUB_CMDLINE_LINUX $ttys_cmdline\" >>$os_dir/etc/default/grub
+
+    # 生成 dracut initramfs 和 grub.cfg
+    chroot $os_dir xbps-reconfigure -fa
 }
 
 get_http_file_size() {
@@ -3718,6 +3888,12 @@ get_ucode_firmware_pkgs() {
     nixos-amd) echo linux-firmware microcodeAmd ;;
     nixos-*) echo linux-firmware ;;
 
+    # linux-firmware 是元包，只依赖 linux-firmware-amd 和 linux-firmware-network
+    # intel-ucode 在 nonfree 仓库
+    void-intel) echo linux-firmware linux-firmware-intel intel-ucode ;;
+    void-amd) echo linux-firmware ;;
+    void-*) echo linux-firmware ;;
+
     fedora-intel) echo linux-firmware microcode_ctl ;;
     fedora-amd) echo linux-firmware amd-ucode-firmware microcode_ctl ;;
     fedora-*) echo linux-firmware microcode_ctl ;;
@@ -3857,6 +4033,35 @@ create_network_manager_config() {
     for file in "$os_dir"/etc/NetworkManager/system-connections/cloud-init-eth*.nmconnection; do
         cat -n "$file" >&2
     done
+}
+
+install_void_network() {
+    local os_dir=$1
+
+    # base-system 没有 NetworkManager/dbus，本 hook 是它们唯一的安装点
+    chroot $os_dir xbps-install -Sy dbus NetworkManager
+
+    # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
+    create_cloud_init_network_config /net.cfg
+    create_network_manager_config /net.cfg "$os_dir"
+    rm /net.cfg
+
+    # 启用 NetworkManager（依赖 dbus）
+    # 不要启用 dhcpcd：base-system 装了它，但网络由 NM 管（ADR-0001）
+    enable_runit_service $os_dir dbus
+    enable_runit_service $os_dir NetworkManager
+
+    # 修正网卡名
+    # 不用 systemd 的 add_fix_eth_name_systemd_service，也不挂成 runit 服务：
+    # runit 没有排序，NM 可能先启动
+    # Void 的 runit stage 2 在 runsvdir 之前执行 /etc/rc.local，早于 dbus/NetworkManager
+    download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
+    cat >$os_dir/etc/rc.local <<'EOF'
+#!/bin/sh
+bash /fix-eth-name.sh
+rm -f /fix-eth-name.sh /etc/rc.local
+EOF
+    chmod +x $os_dir/etc/rc.local
 }
 
 modify_linux() {
@@ -4634,6 +4839,45 @@ change_ssh_port() {
     local ssh_port=$2
 
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
+}
+
+install_void_init() {
+    local os_dir=$1
+
+    # Void 的 base-system 不会自动创建 machine-id
+    clear_machine_id $os_dir
+
+    # sshd
+    # Void 是 runit，没有 systemctl
+    enable_runit_service $os_dir sshd
+    chroot $os_dir ssh-keygen -A
+
+    if is_need_change_ssh_port; then
+        change_ssh_port $os_dir $ssh_port
+    fi
+
+    # 公钥/密码
+    add_user_if_need "$os_dir"
+    if is_need_set_ssh_keys; then
+        set_ssh_keys_and_del_password $os_dir
+        change_ssh_conf_for_key_login $os_dir
+    else
+        change_user_password $os_dir
+        change_ssh_conf_for_password_login $os_dir
+    fi
+
+    # locale
+    # glibc-locales 默认把所有 locale 注释掉了，没有的行直接追加
+    local loc
+    for loc in 'C.UTF-8 UTF-8' 'en_US.UTF-8 UTF-8'; do
+        sed -i "s|^#\? *$loc\$|$loc|" $os_dir/etc/default/libc-locales
+        grep -qxF "$loc" $os_dir/etc/default/libc-locales ||
+            echo "$loc" >>$os_dir/etc/default/libc-locales
+    done
+    chroot $os_dir xbps-reconfigure -f glibc-locales
+
+    # 时区，runit 的 05-misc.sh 会读它生成 /etc/localtime
+    sed -i 's|^#\?TIMEZONE=.*|TIMEZONE="Asia/Shanghai"|' $os_dir/etc/rc.conf
 }
 
 # 暂时用不着
@@ -8760,6 +9004,9 @@ trans() {
         arch | gentoo | aosc)
             create_part
             install_arch_gentoo_aosc
+            ;;
+        void)
+            install_void
             ;;
         nixos)
             create_part
