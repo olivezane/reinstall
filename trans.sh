@@ -2256,6 +2256,9 @@ add_frpc_systemd_service_if_need() {
     fi
 }
 
+# 由 ticket 06 实现
+add_frpc_runit_service_if_need() { :; }
+
 get_fs_of_mount_point() {
     local mount_point=$1
 
@@ -2328,6 +2331,91 @@ basic_init() {
 
     # frpc
     add_frpc_systemd_service_if_need $os_dir
+}
+
+install_void() {
+    info "install $distro"
+
+    create_part
+
+    local os_dir=/os
+
+    # 挂载分区
+    mount_part_basic_layout $os_dir $os_dir/boot/efi
+
+    # 添加 swap
+    create_swap_if_ram_less_than 512 $os_dir/swapfile
+
+    # 解压系统
+    apk add tar xz pv
+    # shellcheck disable=SC2154
+    download "$img" $os_dir/void.tar.xz
+    echo "Uncompressing Void..."
+    pv -f $os_dir/void.tar.xz | tar xpJ --numeric-owner --xattrs-include='*.*' -C $os_dir
+    rm -f $os_dir/void.tar.xz
+    apk del tar xz pv
+
+    # dns
+    cp_resolv_conf $os_dir
+
+    # 挂载伪文件系统
+    mount_pseudo_fs $os_dir
+
+    install_void_packages
+    install_void_network
+    install_void_init
+    install_void_boot
+    add_frpc_runit_service_if_need $os_dir
+
+    # fstab
+    # fstab 头部有使用说明，因此用 >>
+    local alpine_rootfs=$os_dir/alpine
+    create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
+    # genfstab 会用到 findmnt 等工具
+    retry 5 chroot "$alpine_rootfs" apk add util-linux
+    chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
+    umount -R "$alpine_rootfs/parent"
+    remove_alpine_rootfs "$alpine_rootfs"
+
+    # 删除 swap
+    swapoff -a
+    rm -rf $os_dir/swapfile
+}
+
+install_void_packages() {
+    # 仓库源
+    # aarch64 的仓库在 /current/aarch64 下
+    local repo=$mirror/current
+    case "$(uname -m)" in
+    aarch64) repo=$mirror/current/aarch64 ;;
+    esac
+    mkdir -p $os_dir/etc/xbps.d
+    cat <<EOF >$os_dir/etc/xbps.d/00-repository-main.conf
+repository=$repo
+repository=$repo/nonfree
+EOF
+
+    # 更新 xbps 自身
+    chroot $os_dir xbps-install -Suy xbps
+
+    # 完整升级，避免旧快照与滚动仓库混装出依赖冲突
+    chroot $os_dir xbps-install -Suy
+
+    # 安装 base-system
+    chroot $os_dir xbps-install -Sy base-system
+
+    # 删除只适合容器的包
+    chroot $os_dir xbps-remove -Ry base-container-full
+
+    # base-system 只在 i686*/x86_64* 依赖 linux
+    if [ "$(uname -m)" = aarch64 ]; then
+        chroot $os_dir xbps-install -Sy linux
+    fi
+
+    # firmware + microcode
+    if fw_pkgs=$(get_ucode_firmware_pkgs) && [ -n "$fw_pkgs" ]; then
+        chroot $os_dir xbps-install -Sy $fw_pkgs
+    fi
 }
 
 install_arch_gentoo_aosc() {
@@ -2730,6 +2818,9 @@ EOF
     swapoff -a
     rm -rf $os_dir/swapfile
 }
+
+# 由 ticket 05 实现
+install_void_boot() { :; }
 
 get_http_file_size() {
     url=$1
@@ -3718,6 +3809,12 @@ get_ucode_firmware_pkgs() {
     nixos-amd) echo linux-firmware microcodeAmd ;;
     nixos-*) echo linux-firmware ;;
 
+    # linux-firmware 是元包，只依赖 linux-firmware-amd 和 linux-firmware-network
+    # intel-ucode 在 nonfree 仓库
+    void-intel) echo linux-firmware linux-firmware-intel intel-ucode ;;
+    void-amd) echo linux-firmware ;;
+    void-*) echo linux-firmware ;;
+
     fedora-intel) echo linux-firmware microcode_ctl ;;
     fedora-amd) echo linux-firmware amd-ucode-firmware microcode_ctl ;;
     fedora-*) echo linux-firmware microcode_ctl ;;
@@ -3858,6 +3955,9 @@ create_network_manager_config() {
         cat -n "$file" >&2
     done
 }
+
+# 由 ticket 03 实现
+install_void_network() { :; }
 
 modify_linux() {
     local os_dir=$1
@@ -4635,6 +4735,9 @@ change_ssh_port() {
 
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
 }
+
+# 由 ticket 04 实现
+install_void_init() { :; }
 
 # 暂时用不着
 add_user_if_need_for_alpine() {
@@ -8760,6 +8863,9 @@ trans() {
         arch | gentoo | aosc)
             create_part
             install_arch_gentoo_aosc
+            ;;
+        void)
+            install_void
             ;;
         nixos)
             create_part
