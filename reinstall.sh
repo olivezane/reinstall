@@ -5084,6 +5084,7 @@ fi
 # 整理参数
 long_opts=
 for o in ci installer debug minimal no-cloud-kernel no-auto-drivers allow-ping force-cn help \
+    fs-type: \
     add-driver: \
     hold: sleep: \
     iso: \
