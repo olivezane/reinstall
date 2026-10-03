@@ -192,6 +192,7 @@ bash reinstall.sh anolis      7|8|23
 - `--web-port PORT` Change the Web port (for log observation during installation only)
 - `--frpc-config PATH` Add frpc for intranet tunneling. Parameter can be local filepath or HTTP URL of the configuration file.
 - `--no-cloud-kernel` Avoid using cloud kernel to prevent black or glitch screens on certain machines; applicable to Debian, Ubuntu, Alpine and openSUSE.
+- `--fs-type default|ext4|xfs` Set the root filesystem; the default `default` keeps each distro's built-in logic. Linux only, and only these paths are supported: alpine/arch/gentoo/aosc/nixos/void, Debian 11+/Kali, Ubuntu 22.04+, and the centos/almalinux/rocky/oracle/anolis/opencloudos/openeuler/redhat cloud images. Other paths (fedora/openSUSE and other cloud-image dd paths, dd, Windows, netboot.xyz, fnos/fygoos) will error out; xfs also requires kernel >= 5.10.
 - `--hold 1` Reboot only into install environment, without running installer, only for SSH connect to test network connection.
 - `--hold 2` Prevent reboot after installation completes, allowing SSH login to modify system content; the system is mounted at `/target` for Debian/Kali and `/os` for other distros.
 

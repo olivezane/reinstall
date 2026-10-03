@@ -192,6 +192,7 @@ bash reinstall.sh anolis      7|8|23
 - `--web-port PORT` 修改 Web 端口（安装期间观察日志用）
 - `--frpc-config PATH` 添加 frpc 内网穿透，参数填配置文件的本地路径或 HTTP 链接
 - `--no-cloud-kernel` 不使用云内核，避免部分机器黑屏/花屏，适用于 Debian、Ubuntu、Alpine、openSUSE
+- `--fs-type default|ext4|xfs` 指定根分区文件系统，默认 `default` 保持发行版默认逻辑。仅支持 Linux，且只支持这些路径：alpine/arch/gentoo/aosc/nixos/void、Debian 11+/Kali、Ubuntu 22.04+，以及 centos/almalinux/rocky/oracle/anolis/opencloudos/openeuler/redhat 云镜像。其余路径（fedora/openSUSE 等云镜像 dd 路径、dd、Windows、netboot.xyz、fnos/fygoos）会报错；xfs 还要求内核 ≥ 5.10
 - `--hold 1` 仅重启到安装环境，不运行安装，用于 SSH 登录验证网络连通性
 - `--hold 2` 安装结束后不重启，用于 SSH 登录修改系统内容，Debian/Kali 会挂载在 `/target`，其它系统会挂载在 `/os`
 
