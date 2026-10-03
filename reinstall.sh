@@ -2346,8 +2346,6 @@ get_install_fs_backend() {
 }
 
 verify_xfs_compatibility() {
-    local fs_backend=$1
-
     # xfs v5 的 2038 修复在 Linux 5.10，老内核提前报错
     case "$distro:$releasever" in
     debian:9 | debian:10)
@@ -2369,10 +2367,6 @@ verify_xfs_compatibility() {
         error_and_exit "xfs is only supported on AlmaLinux/Rocky 9+ in this script."
         ;;
     esac
-
-    if [ "$fs_backend" = image ]; then
-        error_and_exit "xfs is not supported for image-based install path of $distro."
-    fi
 }
 
 verify_fs_type() {
@@ -2402,7 +2396,7 @@ verify_fs_type() {
     esac
 
     if [ "$fs_type" = xfs ]; then
-        verify_xfs_compatibility "$fs_backend"
+        verify_xfs_compatibility
     fi
 }
 

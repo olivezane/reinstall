@@ -3095,8 +3095,12 @@ xda() {
     fi
 }
 
+is_fs_type_chosen() {
+    [ -n "$fs_type" ] && [ "$fs_type" != default ]
+}
+
 get_root_fs_type() {
-    if [ -n "$fs_type" ] && [ "$fs_type" != default ]; then
+    if is_fs_type_chosen; then
         echo "$fs_type"
     else
         echo ext4
@@ -3350,7 +3354,7 @@ create_part() {
                 set 1 boot on
             update_part
 
-            mkfs.fat "/dev/$(xda 1)"                             #1 efi
+            mkfs.fat "/dev/$(xda 1)"                               #1 efi
             format_root_partition "/dev/$(xda 2)" '' "$ext4_opts" #2 os
         elif is_xda_gt_2t; then
             # bios > 2t
@@ -3361,7 +3365,7 @@ create_part() {
                 set 1 bios_grub on
             update_part
 
-            echo                                                 #1 bios_boot
+            echo                                                  #1 bios_boot
             format_root_partition "/dev/$(xda 2)" '' "$ext4_opts" #2 os
         else
             # bios
@@ -6159,7 +6163,7 @@ EOF
     # centos8 如果用alpine格式化xfs，grub2-mkconfig和grub2里面都无法识别xfs分区
     mount_nouuid /dev/$os_part /nbd/
     mount_pseudo_fs /nbd/
-    if [ -n "$fs_type" ] && [ "$fs_type" != default ]; then
+    if is_fs_type_chosen; then
         target_os_fstype=$fs_type
     else
         target_os_fstype=$os_part_fstype
