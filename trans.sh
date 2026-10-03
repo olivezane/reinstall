@@ -703,6 +703,12 @@ set_config() {
     printf '%s' "$2" >"/configs/$1"
 }
 
+load_fs_config() {
+    if [ -f /configs/fs_type ]; then
+        fs_type=$(head -n1 /configs/fs_type | to_lower)
+    fi
+}
+
 # ubuntu 安装版、el/ol 安装版不使用该密码
 get_password_linux_sha512() {
     get_config password-linux-sha512
@@ -3089,6 +3095,45 @@ xda() {
     fi
 }
 
+get_root_fs_type() {
+    if [ -n "$fs_type" ] && [ "$fs_type" != default ]; then
+        echo "$fs_type"
+    else
+        echo ext4
+    fi
+}
+
+format_root_partition() {
+    local part=$1
+    local label=$2
+    local ext4_compat_opts=$3
+    local root_fs
+
+    root_fs=$(get_root_fs_type)
+    info false "format root: $part ($root_fs)"
+
+    # shellcheck disable=SC2086
+    case "$root_fs" in
+    ext4)
+        if [ -n "$label" ]; then
+            mkfs.ext4 -F -L "$label" $ext4_compat_opts "$part"
+        else
+            mkfs.ext4 -F $ext4_compat_opts "$part"
+        fi
+        ;;
+    xfs)
+        if [ -n "$label" ]; then
+            mkfs.xfs -f -L "$label" "$part"
+        else
+            mkfs.xfs -f "$part"
+        fi
+        ;;
+    *)
+        error_and_exit "Unsupported root fs type: $root_fs"
+        ;;
+    esac
+}
+
 create_part() {
     # 除了 dd 都会用到
     info "Create Part"
@@ -3097,6 +3142,9 @@ create_part() {
     apk add parted e2fsprogs
     if is_efi; then
         apk add dosfstools
+    fi
+    if [ "$fs_type" = xfs ]; then
+        apk add xfsprogs
     fi
 
     # 清除分区表
@@ -3288,6 +3336,7 @@ create_part() {
         fi
     elif [ "$distro" = alpine ] || [ "$distro" = arch ] || [ "$distro" = gentoo ] ||
         [ "$distro" = nixos ] || [ "$distro" = aosc ] || [ "$distro" = void ]; then
+        root_fs=$(get_root_fs_type)
         # alpine 本身关闭了 64bit ext4
         # https://gitlab.alpinelinux.org/alpine/alpine-conf/-/blob/3.18.1/setup-disk.in?ref_type=tags#L908
         # 而且 alpine 的 extlinux 不兼容 64bit ext4
@@ -3297,32 +3346,32 @@ create_part() {
             parted /dev/$xda -s -- \
                 mklabel gpt \
                 mkpart '" "' fat32 1MiB 101MiB \
-                mkpart '" "' ext4 101MiB 100% \
+                mkpart '" "' $root_fs 101MiB 100% \
                 set 1 boot on
             update_part
 
-            mkfs.fat "/dev/$(xda 1)"                #1 efi
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)" #2 os
+            mkfs.fat "/dev/$(xda 1)"                             #1 efi
+            format_root_partition "/dev/$(xda 2)" '' "$ext4_opts" #2 os
         elif is_xda_gt_2t; then
             # bios > 2t
             parted /dev/$xda -s -- \
                 mklabel gpt \
                 mkpart '" "' ext4 1MiB 2MiB \
-                mkpart '" "' ext4 2MiB 100% \
+                mkpart '" "' $root_fs 2MiB 100% \
                 set 1 bios_grub on
             update_part
 
-            echo                                    #1 bios_boot
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)" #2 os
+            echo                                                 #1 bios_boot
+            format_root_partition "/dev/$(xda 2)" '' "$ext4_opts" #2 os
         else
             # bios
             parted /dev/$xda -s -- \
                 mklabel msdos \
-                mkpart primary ext4 1MiB 100% \
+                mkpart primary $root_fs 1MiB 100% \
                 set 1 boot on
             update_part
 
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 1)" #1 os
+            format_root_partition "/dev/$(xda 1)" '' "$ext4_opts" #1 os
         fi
     else
         # 安装红帽系或ubuntu
@@ -9064,6 +9113,7 @@ rm -f /etc/runlevels/default/local
 
 # 提取变量
 extract_env_from_cmdline
+load_fs_config
 
 # 带参数运行部分
 # 重新下载并 exec 运行新脚本
