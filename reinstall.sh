@@ -3820,6 +3820,10 @@ build_nextos_cmdline() {
             nextos_cmdline+=" net.ifnames=0"
             nextos_cmdline+=" simple-cdd/profiles=kali"
         fi
+        # 根文件系统选 xfs 时，partman 配方的 $default_filesystem 用 xfs
+        if [ "$fs_type" = xfs ]; then
+            nextos_cmdline+=" partman/default_filesystem=xfs"
+        fi
     elif is_distro_like_redhat $nextos_distro; then
         # redhat
         nextos_cmdline="root=live:$nextos_squashfs inst.ks=$nextos_ks"
@@ -4031,7 +4035,7 @@ partman-cros
 partman-iscsi
 partman-jfs
 partman-md
-partman-xfs
+$([ "$fs_type" = xfs ] || echo partman-xfs)
 rescue-check
 wpasupplicant-udeb
 lilo-installer
@@ -4048,7 +4052,7 @@ firewire-core-modules-$kver-di
 usb-storage-modules-$kver-di
 isofs-modules-$kver-di
 jfs-modules-$kver-di
-xfs-modules-$kver-di
+$([ "$fs_type" = xfs ] || echo "xfs-modules-$kver-di")
 loop-modules-$kver-di
 pata-modules-$kver-di
 sata-modules-$kver-di
