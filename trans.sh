@@ -6159,9 +6159,31 @@ EOF
     # centos8 如果用alpine格式化xfs，grub2-mkconfig和grub2里面都无法识别xfs分区
     mount_nouuid /dev/$os_part /nbd/
     mount_pseudo_fs /nbd/
-    case "$os_part_fstype" in
-    ext4) chroot /nbd mkfs.ext4 -F -L "$os_part_label" -U "$os_part_uuid" "/dev/$(xda 2)" ;;
-    xfs) chroot /nbd mkfs.xfs -f -L "$os_part_label" -m uuid=$os_part_uuid "/dev/$(xda 2)" ;;
+    if [ -n "$fs_type" ] && [ "$fs_type" != default ]; then
+        target_os_fstype=$fs_type
+    else
+        target_os_fstype=$os_part_fstype
+    fi
+    case "$target_os_fstype" in
+    ext4)
+        chroot /nbd mkfs.ext4 -F -L "$os_part_label" -U "$os_part_uuid" "/dev/$(xda 2)"
+        ;;
+    xfs)
+        # 目标镜像可能没装 mkfs.xfs（例如 ubuntu 云镜像）
+        if ! chroot /nbd sh -c 'command -v mkfs.xfs' >/dev/null 2>&1; then
+            info "Installing xfsprogs in target image"
+            chroot /nbd apt-get update || true
+            chroot /nbd apt-get install -y xfsprogs || true
+            chroot /nbd sh -c 'command -v mkfs.xfs' >/dev/null 2>&1 ||
+                error_and_exit "Can't install xfsprogs in target image. xfs is not available."
+        fi
+        # xfs 的 label 上限 12 字符
+        mkfs_label="${os_part_label:0:12}"
+        chroot /nbd mkfs.xfs -f ${mkfs_label:+-L "$mkfs_label"} -m uuid=$os_part_uuid "/dev/$(xda 2)"
+        ;;
+    *)
+        error_and_exit "Unsupported target root fs type: $target_os_fstype"
+        ;;
     esac
     umount -R /nbd/
 
