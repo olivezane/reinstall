@@ -3287,7 +3287,7 @@ create_part() {
             mkfs.ext4 -F -L installer "/dev/$(xda 2)" #2 installer
         fi
     elif [ "$distro" = alpine ] || [ "$distro" = arch ] || [ "$distro" = gentoo ] ||
-        [ "$distro" = nixos ] || [ "$distro" = aosc ]; then
+        [ "$distro" = nixos ] || [ "$distro" = aosc ] || [ "$distro" = void ]; then
         # alpine 本身关闭了 64bit ext4
         # https://gitlab.alpinelinux.org/alpine/alpine-conf/-/blob/3.18.1/setup-disk.in?ref_type=tags#L908
         # 而且 alpine 的 extlinux 不兼容 64bit ext4
