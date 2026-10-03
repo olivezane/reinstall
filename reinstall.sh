@@ -121,6 +121,7 @@ Usage: $reinstall_____ anolis      7|8|23
 
                        For Linux Only:
                        [--no-cloud-kernel]         (only for Debian/Ubuntu/Alpine)
+                       [--fs-type     default|ext4|xfs]
 
        Manual:         https://github.com/olivezane/reinstall
 
@@ -2290,6 +2291,119 @@ is_distro_like_debian() {
         _distro=$distro
     fi
     [ "$_distro" = debian ] || [ "$_distro" = kali ]
+}
+
+is_linux_reinstall_target() {
+    case "$distro" in
+    dd | windows | netboot.xyz | reset) return 1 ;;
+    *) return ;;
+    esac
+}
+
+is_fs_type_set() {
+    [ "$fs_type_set" = 1 ]
+}
+
+# 根分区的格式化后端
+# installer: 发行版安装器自己分区（Debian/Kali、红帽系/Ubuntu 的 iso 路径）
+# mkfs:      trans.sh 直接对根分区执行 mkfs
+# image:     镜像自带文件系统，不改
+# unsupported: 不支持选根文件系统
+get_install_fs_backend() {
+    if ! is_linux_reinstall_target; then
+        echo unsupported
+        return
+    fi
+
+    # debian/kali 传统安装走安装器分区流程；debian cloud image 走直接写盘流程
+    if is_distro_like_debian; then
+        if is_use_cloud_image; then
+            echo image
+        else
+            echo installer
+        fi
+        return
+    fi
+
+    if is_use_cloud_image; then
+        # 这几个系统云镜像通过复制文件 + mkfs 重建系统分区
+        case "$distro" in
+        centos | almalinux | rocky | oracle | redhat | anolis | opencloudos | openeuler | ubuntu)
+            echo mkfs
+            ;;
+        *)
+            echo image
+            ;;
+        esac
+        return
+    fi
+
+    case "$distro" in
+    alpine | arch | gentoo | aosc | nixos | void) echo mkfs ;;
+    fnos | fygoos) echo unsupported ;;
+    *) echo installer ;;
+    esac
+}
+
+verify_xfs_compatibility() {
+    local fs_backend=$1
+
+    # xfs v5 的 2038 修复在 Linux 5.10，老内核提前报错
+    case "$distro:$releasever" in
+    debian:9 | debian:10)
+        error_and_exit "xfs is only supported on Debian 11+ in this script."
+        ;;
+    ubuntu:18.04 | ubuntu:20.04)
+        error_and_exit "xfs is only supported on Ubuntu 22.04+ in this script."
+        ;;
+    anolis:7)
+        error_and_exit "xfs is only supported on Anolis 8+ in this script."
+        ;;
+    opencloudos:8)
+        error_and_exit "xfs is only supported on OpenCloudOS 9+ in this script."
+        ;;
+    openeuler:20.03)
+        error_and_exit "xfs is only supported on openEuler 22.03+ in this script."
+        ;;
+    almalinux:8 | rocky:8)
+        error_and_exit "xfs is only supported on AlmaLinux/Rocky 9+ in this script."
+        ;;
+    esac
+
+    if [ "$fs_backend" = image ]; then
+        error_and_exit "xfs is not supported for image-based install path of $distro."
+    fi
+}
+
+verify_fs_type() {
+    local fs_backend
+
+    if ! is_fs_type_set; then
+        return
+    fi
+
+    if ! is_linux_reinstall_target; then
+        error_and_exit "--fs-type is only supported for Linux reinstall targets."
+    fi
+
+    fs_backend=$(get_install_fs_backend)
+
+    case "$fs_type" in
+    default) return ;;
+    ext4) ;;
+    xfs) ;;
+    *) error_and_exit "Invalid --fs-type value: $fs_type" ;;
+    esac
+
+    case "$fs_backend" in
+    image | unsupported)
+        error_and_exit "--fs-type $fs_type is not supported for $distro."
+        ;;
+    esac
+
+    if [ "$fs_type" = xfs ]; then
+        verify_xfs_compatibility "$fs_backend"
+    fi
 }
 
 get_latest_distro_releasever() {
@@ -4504,6 +4618,9 @@ This script is outdated, please download reinstall.sh again.
 
     # 保存配置
     mkdir -p $initrd_dir/configs
+    if is_fs_type_set && [ "$fs_type" != default ]; then
+        printf '%s\n' "$fs_type" >$initrd_dir/configs/fs_type
+    fi
     if [ -n "$ssh_keys" ]; then
         cat <<<"$ssh_keys" >$initrd_dir/configs/ssh_keys
     else
@@ -5065,6 +5182,16 @@ while true; do
         minimal=1
         shift
         ;;
+    --fs-type)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        fs_type=$(to_lower <<<"$2")
+        case "$fs_type" in
+        default | ext4 | xfs) ;;
+        *) error_and_exit "Invalid $1 value: $2" ;;
+        esac
+        fs_type_set=1
+        shift 2
+        ;;
     --no-cloud-kernel)
         no_cloud_kernel=1
         shift
@@ -5350,6 +5477,9 @@ redhat | centos | almalinux | rocky | fedora | ubuntu)
     fi
     ;;
 esac
+
+# 文件系统参数依赖 --ci 归一化后的最终安装后端，因此放在这里检查
+verify_fs_type
 
 # 检查内存
 # 会用到 wmic，因此要在设置国内 confhome 后使用
