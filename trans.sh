@@ -1572,7 +1572,7 @@ install_alpine() {
     if $hack_lowram; then
         # 预先加载需要的模块
         if rc-service -q modloop status; then
-            modules="ext4 vfat nls_utf8 nls_cp437"
+            modules="$(get_root_fs_type) vfat nls_utf8 nls_cp437"
             for mod in $modules; do
                 modprobe $mod
             done
@@ -6538,7 +6538,7 @@ mount_part_basic_layout() {
 
     # 挂载系统分区
     mkdir -p $os_dir
-    mount -t ext4 "/dev/$(xda $os_part_num)" $os_dir
+    mount -t "$(get_root_fs_type)" "/dev/$(xda $os_part_num)" $os_dir
 
     # 挂载 efi 分区
     if is_efi; then
