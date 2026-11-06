@@ -4365,19 +4365,6 @@ EOF
         create_network_manager_config /net.cfg "$os_dir"
         rm /net.cfg
 
-        # TODO: fedora 43 eol 后删除
-        # 删除 cloud-init 会删除依赖包 netcat
-        # 但是删除 netcat 时会报错
-        # 因此保留 netcat 包
-        # >>> Running %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
-        # >>> Error in %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
-        # >>> Scriptlet output:
-        # >>> failed to create admindir: No such file or directory
-        # >>> [RPM] %preun(netcat-1.229-3.fc43.x86_64) scriptlet failed, exit status 2
-        # >>> [RPM] netcat-1.229-3.fc43.x86_64: erase failed
-        if [ "$distro" = fedora ] && [ "$releasever" = 43 ]; then
-            chroot $os_dir dnf mark user netcat -y
-        fi
         remove_or_disable_cloud_init $os_dir
 
         disable_selinux $os_dir
@@ -7998,6 +7985,7 @@ EOF
     # https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/
     add_driver_generic_virtio() {
         info "Add drivers: Generic virtio"
+        mkdir -p "$drv/virtio"
 
         # 要区分 win10 / win11 驱动，虽然他们的 NT 版本号都是 10.0，但驱动文件有区别
         # https://github.com/virtio-win/kvm-guest-drivers-windows/commit/9af43da9e16e2d4bf4ea4663cdc4f29275fff48f
@@ -8105,11 +8093,15 @@ EOF
             local can_use_cn_mirror=false
             local grace=true
 
-            mkdir -p "$drv/virtio"
-            download_from_fedorapeople "$checksum" "$drv/virtio/checksum" $can_use_cn_mirror $grace >/dev/null &&
+            local ret=1
+            if download_from_fedorapeople "$checksum" "$drv/virtio/checksum" $can_use_cn_mirror $grace >/dev/null &&
                 grep -Eo -m1 'virtio-win-[0-9][^[:space:]]+\.noarch\.rpm' "$drv/virtio/checksum" |
                 sed -E 's,^virtio-win-(.*)\.noarch\.rpm$,archive-virtio/virtio-win-\1,' |
-                    grep .
+                    grep .; then
+                ret=0
+            fi
+            rm -f "$drv/virtio/checksum"
+            return $ret
         }
 
         case "$nt_ver" in
@@ -8162,7 +8154,6 @@ EOF
 
         if [ "$virtio_source" = iso ]; then
             download_from_fedorapeople $baseurl/$dir/virtio-win.iso $drv/virtio.iso $can_use_cn_mirror
-            mkdir -p $drv/virtio
             mount -o ro $drv/virtio.iso $drv/virtio
 
             # vista 如果安装气动驱动，会报错 windows could not configure one or more system components
