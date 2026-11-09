@@ -6375,9 +6375,13 @@ EOF
             chroot /nbd sh -c 'command -v mkfs.xfs' >/dev/null 2>&1 ||
                 error_and_exit "Can't install xfsprogs in target image. xfs is not available."
         fi
-        # xfs 的 label 上限 12 字符
-        mkfs_label="${os_part_label:0:12}"
-        chroot /nbd mkfs.xfs -f ${mkfs_label:+-L "$mkfs_label"} -m uuid=$os_part_uuid "/dev/$(xda os)"
+        # xfs 的 label 上限 12 字符，用 printf 截断，不能用 ${var:0:12}（dash 不支持）
+        mkfs_label=$(printf '%.12s' "$os_part_label")
+        if [ -n "$mkfs_label" ]; then
+            chroot /nbd mkfs.xfs -f -L "$mkfs_label" -m uuid=$os_part_uuid "/dev/$(xda os)"
+        else
+            chroot /nbd mkfs.xfs -f -m uuid=$os_part_uuid "/dev/$(xda os)"
+        fi
         ;;
     *)
         error_and_exit "Unsupported target root fs type: $target_os_fstype"
