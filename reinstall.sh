@@ -3765,7 +3765,8 @@ build_extra_cmdline() {
     # 会将 extra.xxx=yyy 写入新系统的 /etc/modprobe.d/local.conf
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
-    for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image no_cloud_kernel no_auto_drivers main_disk \
+    for key in confhome hold force_boot_mode force_cn cloud_image no_cloud_kernel main_disk \
+        force_old_windows_setup no_auto_drivers no_lockout_threshold \
         elts deb_mirror \
         username ssh_port rdp_port web_port web_path allow_ping; do
         value=${!key}
@@ -5108,6 +5109,7 @@ fi
 long_opts=
 for o in ci installer debug minimal no-cloud-kernel no-auto-drivers allow-ping force-cn help \
     fs-type: \
+    no-lockout no-lockout-threshold \
     add-driver: \
     hold: sleep: \
     iso: \
@@ -5220,6 +5222,10 @@ while true; do
         ;;
     --no-auto-drivers)
         no_auto_drivers=1
+        shift
+        ;;
+    --no-lockout | --no-lockout-threshold)
+        no_lockout_threshold=1
         shift
         ;;
     --allow-ping)
